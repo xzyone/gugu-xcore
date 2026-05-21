@@ -83,10 +83,15 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 	inbound.Name = "hysteria"
 	inbound.CanSpliceCopy = 3
 
+	// 先解包出底层 conn(stats 层会包装 conn);User() 由底层 *interConn/*InterUdpConn 实现。
+	// 之前在被包装的 conn 上做 conn.(User) 断言会失败,导致 inbound.User 始终为 nil,
+	// dispatcher 不会创建 user>>>email>>>traffic 计数器 → HY2 没有 per-user 流量统计。
+	iConn := stat.TryUnwrapStatsConn(conn)
+
 	var useremail string
 	var userlevel uint32
 	type User interface{ User() *protocol.MemoryUser }
-	if v, ok := conn.(User); ok {
+	if v, ok := iConn.(User); ok {
 		inbound.User = v.User()
 		if inbound.User != nil {
 			useremail = inbound.User.Email
@@ -94,7 +99,6 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 		}
 	}
 
-	iConn := stat.TryUnwrapStatsConn(conn)
 	if _, ok := iConn.(*hysteria.InterUdpConn); ok {
 		r := io.Reader(conn)
 		b := make([]byte, MaxUDPSize)
