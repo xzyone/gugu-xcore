@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package xray.proxy.snell;
+option csharp_namespace = "Xray.Proxy.Snell";
+option go_package = "github.com/xtls/xray-core/proxy/snell";
+option java_package = "com.xray.proxy.snell";
+option java_multiple_files = true;
+
+import "common/protocol/user.proto";
+import "common/protocol/server_spec.proto";
+
+// Account 是 Snell 的用户凭据。Snell 用 PSK(预共享密钥)派生 AEAD key(Argon2id),
+// 多用户时服务端用每个用户的 PSK 逐一试解首个 record(类似 shadowsocks AEAD)。
+message Account {
+  string psk = 1;
+  // 协议版本:4 / 5 / 6。0 视为默认(4)。v4/v5 线路等价,v6 引入流量整形。
+  uint32 version = 2;
+  // 混淆(仅 v4/v5):"" | "http" | "tls"。
+  string obfs_mode = 3;
+  string obfs_host = 4;
+  // v6 整形模式:"" | "default" | "unshaped" | "unsafe-raw"(仅 v6)。
+  string v6_mode = 5;
+  // v6 多用户标识(clientID/userKey);v6 用共享 PSK + clientID 区分用户。
+  string client_id = 6;
+}
+
+message ServerConfig {
+  repeated xray.common.protocol.User users = 1;
+}
+
+message ClientConfig {
+  // server.User 携带 Account(psk/version/obfs)。
+  xray.common.protocol.ServerEndpoint server = 1;
+}
