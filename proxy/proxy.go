@@ -278,7 +278,7 @@ func (w *VisionReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 			}
 		}
 		readerConn, readCounter, _ := UnwrapRawConn(w.conn)
-		// 给 mmw-agent 这类下游一次包装底层 conn 的机会(per-user 限速),
+		// 给 gugu-agent 这类下游一次包装底层 conn 的机会(per-user 限速),
 		// 未注册 hook 时原样返回,无开销。详见 vision_limiter_hook.go。
 		readerConn = maybeWrapVisionConn(w.ctx, readerConn)
 		w.directReadCounter = readCounter
