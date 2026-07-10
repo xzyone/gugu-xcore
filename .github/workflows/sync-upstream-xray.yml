@@ -73,6 +73,10 @@ jobs:
           echo "upstream_ref=$upstream_ref" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: Prefetch dependencies
+        if: steps.merge.outputs.changed == 'true'
+        run: go mod download
+
       - name: Run tests
         if: steps.merge.outputs.changed == 'true'
         run: |
