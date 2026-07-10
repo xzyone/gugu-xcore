@@ -1,0 +1,122 @@
+name: Sync Upstream Xray-Core
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force a sync even if the latest upstream release is already merged'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Merge Upstream and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/XTLS/Xray-core.git 2>/dev/null || true
+          git fetch upstream --tags --force
+
+      - name: Detect latest upstream release
+        id: upstream
+        run: |
+          set -euo pipefail
+          latest=$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
+          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+            echo "Failed to detect upstream release tag"
+            exit 1
+          fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Upstream release: $latest"
+
+      - name: Merge upstream release
+        id: merge
+        env:
+          FORCE_SYNC: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+
+          latest='${{ steps.upstream.outputs.latest }}'
+          upstream_ref="refs/tags/${latest}"
+
+          if git merge-base --is-ancestor "$upstream_ref" HEAD; then
+            if [ "$FORCE_SYNC" != "true" ]; then
+              echo "Upstream ${latest} is already merged, nothing to do."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-ff --no-edit "$latest"
+          short_sha=$(git rev-parse --short=12 HEAD)
+          tag="gugu-xcore-${latest#v}-${short_sha}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "upstream_ref=$upstream_ref" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prefetch dependencies
+        if: steps.merge.outputs.changed == 'true'
+        run: go mod download
+
+      - name: Run tests
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          go test ./...
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -v ./main
+
+      - name: Push main and tag
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          tag='${{ steps.merge.outputs.tag }}'
+          git tag "$tag"
+          git push origin HEAD:main
+          git push origin "$tag"
+
+      - name: Create Release
+        if: steps.merge.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.merge.outputs.tag }}
+          name: ${{ steps.merge.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify agent repo
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.AGENT_REPO_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'xzyone',
+              repo: 'gugu-agent',
+              event_type: 'xcore-release',
+              client_payload: {
+                xcore_ref: '${{ steps.merge.outputs.tag }}',
+                upstream_tag: '${{ steps.upstream.outputs.latest }}',
+              },
+            })
+            core.info(`Dispatched gugu-agent rebuild for ${{ steps.merge.outputs.tag }}`)
